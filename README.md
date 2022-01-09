@@ -15,7 +15,7 @@ M-x h5-mode
 ### View Dataset as an Image
 `i` view-as-image
 ### View Dataset as Text
-RET view-as-text
+`RET` view-as-text
 ### View Attribute
 RET 
 ### Quit
