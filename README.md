@@ -17,8 +17,8 @@ M-x h5-mode
 ### View Dataset as Text
 `RET` view-as-text
 ### View Attribute
-RET 
+`RET` view-attribute
 ### Quit
-q quit-window
+`q` quit-window
 
 
