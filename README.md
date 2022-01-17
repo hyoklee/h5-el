@@ -9,8 +9,8 @@ M-x h5-mode
 #### Collapse/Expand Group
 
 `RET` open-group
-
 `+` create-group
+`DEL` delete-group
 
 ### View Dataset as an Image
 `i` view-as-image
