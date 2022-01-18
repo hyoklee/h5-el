@@ -9,8 +9,12 @@ M-x h5-mode
 #### Collapse/Expand Group
 
 `RET` open-group
+
 `+` create-group
+
 `DEL` delete-group
+
+
 
 ### View Dataset as an Image
 `i` view-as-image
@@ -18,6 +22,10 @@ M-x h5-mode
 `RET` view-as-text
 ### View Attribute
 `RET` view-attribute
+
+### Searh Value
+`Ctrl-s` search
+
 ### Quit
 `q` quit-window
 
