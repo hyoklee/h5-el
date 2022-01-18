@@ -23,7 +23,7 @@ M-x h5-mode
 ### View Attribute
 `RET` view-attribute
 
-### Searh Value
+### Search Value
 `Ctrl-s` search
 
 ### Quit
