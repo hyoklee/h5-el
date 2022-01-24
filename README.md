@@ -7,7 +7,6 @@ M-x h5-mode
 ```
 ### View Evertying (Datasets, Attributes, and Group)
 #### Collapse/Expand Group
-
 `RET` open-group
 
 `+` create-group
@@ -18,6 +17,7 @@ M-x h5-mode
 
 ### View Dataset as an Image
 `i` view-as-image
+
 `e` export-as-image
 
 ### View Dataset as Text
