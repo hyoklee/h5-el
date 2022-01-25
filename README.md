@@ -13,6 +13,7 @@ M-x h5-mode
 
 `DEL` delete-group
 
+`s` sort-group
 
 
 ### View Dataset as an Image
