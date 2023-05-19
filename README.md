@@ -23,6 +23,9 @@ M-x h5-mode
 
 ### View Dataset as Text
 `RET` view-as-text
+
+`E` export-as-csv
+
 ### View Attribute
 `RET` view-attribute
 
