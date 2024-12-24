@@ -5,7 +5,7 @@ Emacs HDF5 mode
 ```
 M-x h5-mode
 ```
-### View Evertying (Datasets, Attributes, and Group)
+### View Everything (Datasets, Attributes, and Group)
 #### Collapse/Expand Group
 `RET` open-group
 
