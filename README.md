@@ -5,13 +5,16 @@ Emacs HDF5 mode
 ```
 M-x h5-mode
 ```
+
+It's similar to Dired.
+
 ### View Everything (Datasets, Attributes, and Group)
 #### Collapse/Expand Group
 `RET` open-group
 
 `+` create-group
 
-`DEL` delete-group
+`d` delete-group
 
 `s` sort-group
 
