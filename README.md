@@ -192,41 +192,97 @@ file.Walk(func(path string, obj hdf5.Object) {
 
 ## h5-mode - Interactive HDF5 Viewer
 
+## Installation
+
+Add h5-el to your Emacs load path and require h5-mode:
+
+```elisp
+(add-to-list 'load-path "/path/to/h5-el")
+(require 'h5-mode)
+```
+
+h5-mode will automatically activate when you open .h5 or .hdf5 files from dired or with `find-file`.
+
+See `sample-emacs-config.el` for a complete configuration example.
+
 ## Usage
+
+### From Dired
+
+1. Navigate to a directory with HDF5 files (`C-x d`)
+2. Move cursor to an .h5 or .hdf5 file
+3. Press `RETURN`
+4. The file will open in h5-mode showing only top-level groups (for faster loading)
+
+### Direct Usage
+
 ```
 M-x h5-mode
 ```
 
 It's similar to Dired.
 
+### Performance Optimization
+
+By default, h5-mode only reads the superblock and displays top-level groups to ensure fast loading, even for large HDF5 files. You can view more levels on demand.
+
 ### View Everything (Datasets, Attributes, and Group)
-#### Collapse/Expand Group
-`RET` open-group
 
-`+` create-group
+#### Navigation
+- `RET` - Open/view object at point (group, dataset, or attribute)
+- `SPC` - Move to next line
+- `q` - Quit window
 
-`d` delete-group
+#### View Depth Control (NEW)
+- `a` - Show all levels (full tree)
+- `1` - Show only top-level (depth 1) - **Default**
+- `2` - Show up to depth 2
+- `3` - Show up to depth 3
+- `g` - Refresh display
 
-`s` sort-group
+#### Group Operations
+- `+` - Create group
+- `d` - Delete group
+- `s` - Sort group
 
+#### View Dataset as an Image
+- `i` - View dataset as image
+- `e` - Export dataset as image
 
-### View Dataset as an Image
-`i` view-as-image
+#### View Dataset as Text
+- `RET` - View dataset as text
+- `E` - Export dataset as CSV
 
-`e` export-as-image
+#### View Attribute
+- `RET` - View attribute
 
-### View Dataset as Text
-`RET` view-as-text
+#### Search Value
+- `C-s` - Search for values in the file
 
-`E` export-as-csv
+### Example Workflow
 
-### View Attribute
-`RET` view-attribute
+```
+1. Open dired: C-x d
+2. Navigate to HDF5 file: my_data.h5
+3. Press: RETURN
+4. h5-mode opens showing:
 
-### Search Value
-`Ctrl-s` search
+   HDF5 File: /path/to/my_data.h5
 
-### Quit
-`q` quit-window
+   Superblock Version: 0
+   Size of offsets: 8
+   Size of lengths: 8
 
+   Objects:
+   (Showing depth: 1, press 'a' to show all)
+
+   [Group] /
+   [Group] /group1
+   [Dataset] /dataset1 (100)
+
+5. Press 'a' to see all levels
+6. Press '1' to return to top-level view
+7. Move to a dataset and press RET to view it
+8. Press 'E' to export dataset to CSV
+```
 

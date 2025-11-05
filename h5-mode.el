@@ -27,6 +27,11 @@
     (define-key map "+" 'h5-create-group)
     (define-key map "d" 'h5-delete-group)
     (define-key map "s" 'h5-sort-group)
+    ;; View depth control
+    (define-key map "a" 'h5-show-all-levels)
+    (define-key map "1" 'h5-show-level-1)
+    (define-key map "2" 'h5-show-level-2)
+    (define-key map "3" 'h5-show-level-3)
     ;; Image operations
     (define-key map "i" 'h5-view-as-image)
     (define-key map "e" 'h5-export-as-image)
@@ -34,6 +39,8 @@
     (define-key map "E" 'h5-export-as-csv)
     ;; Search
     (define-key map (kbd "C-s") 'h5-search)
+    ;; Refresh
+    (define-key map "g" 'h5-refresh)
     ;; Quit
     (define-key map "q" 'quit-window))
   "Keymap for h5-mode.")
@@ -54,7 +61,8 @@ Key bindings:
     (condition-case err
         (progn
           (setq h5-current-file (h5-io-open buffer-file-name))
-          (h5-display-file-structure h5-current-file))
+          ;; Show only top-level by default for faster loading
+          (h5-display-file-structure h5-current-file 1))
       (error
        (message "Error opening HDF5 file: %s" (error-message-string err))))))
 
@@ -66,6 +74,12 @@ Key bindings:
 (defvar-local h5-objects-list nil
   "List of (line-number path object) tuples for objects in current buffer.")
 
+(defvar-local h5-show-depth 1
+  "Depth level for displaying HDF5 objects. 1 = top-level only, nil = all levels.")
+
+(defvar-local h5-expanded-groups nil
+  "List of group paths that have been manually expanded.")
+
 (defun h5-open-or-view ()
   "Open a group, view dataset as text, or view attribute.
 Behavior depends on the object type at point."
@@ -75,12 +89,30 @@ Behavior depends on the object type at point."
     (if (not h5-current-file)
         (progn
           (setq h5-current-file (h5-io-open filename))
-          (h5-display-file-structure h5-current-file))
+          ;; Show only top-level by default for faster loading
+          (h5-display-file-structure h5-current-file 1))
       (h5-view-object-at-point))))
 
-(defun h5-display-file-structure (file)
-  "Display the structure of HDF5 FILE in current buffer."
+(defun h5-path-depth (path)
+  "Calculate the depth of PATH. Root is depth 0."
+  (if (string= path "/")
+      0
+    (length (split-string path "/" t))))
+
+(defun h5-should-show-object-p (path)
+  "Return t if object at PATH should be shown based on current depth setting."
+  (let ((depth (h5-path-depth path)))
+    (or (null h5-show-depth)  ; Show all if depth is nil
+        (<= depth h5-show-depth)  ; Show if within depth limit
+        (member path h5-expanded-groups))))  ; Show if manually expanded
+
+(defun h5-display-file-structure (file &optional depth)
+  "Display the structure of HDF5 FILE in current buffer.
+Optional DEPTH limits how many levels to show (nil = all levels, 1 = top-level only).
+By default, uses the value of h5-show-depth."
   (let ((inhibit-read-only t))
+    (when depth
+      (setq h5-show-depth depth))
     (erase-buffer)
     (setq h5-objects-list nil)
     (insert (format "HDF5 File: %s\n\n" (h5-io-file-path file)))
@@ -90,32 +122,41 @@ Behavior depends on the object type at point."
         (insert (format "Size of offsets: %d\n" (h5-io-superblock-size-of-offsets sb)))
         (insert (format "Size of lengths: %d\n" (h5-io-superblock-size-of-lengths sb)))))
     (insert "\nObjects:\n")
+    (if h5-show-depth
+        (insert (format "(Showing depth: %d, press 'a' to show all)\n" h5-show-depth))
+      (insert "(Showing all levels)\n"))
+    (insert "\n")
     (h5-io-walk file
                 (lambda (path obj)
-                  (let ((line-num (line-number-at-pos)))
-                    (cond
-                     ((h5-io-group-p obj)
-                      (insert (format "  [Group] %s\n" path))
-                      (when (h5-io-group-attributes obj)
-                        (dolist (attr (h5-io-group-attributes obj))
-                          (insert (format "    Attr: %s = %s\n"
-                                        (h5-io-attribute-name attr)
-                                        (h5-io-attribute-data attr))))))
-                     ((h5-io-dataset-p obj)
-                      (insert (format "  [Dataset] %s" path))
-                      (when (h5-io-dataset-dataspace obj)
-                        (let ((dims (h5-io-dataspace-dimensions
-                                    (h5-io-dataset-dataspace obj))))
-                          (when dims
-                            (insert (format " %s" dims)))))
-                      (insert "\n")
-                      (when (h5-io-dataset-attributes obj)
-                        (dolist (attr (h5-io-dataset-attributes obj))
-                          (insert (format "    Attr: %s = %s\n"
-                                        (h5-io-attribute-name attr)
-                                        (h5-io-attribute-data attr)))))))
-                    ;; Track object for later retrieval
-                    (push (list line-num path obj) h5-objects-list))))
+                  (when (h5-should-show-object-p path)
+                    (let ((line-num (line-number-at-pos))
+                          (depth (h5-path-depth path))
+                          (indent (make-string (* depth 2) ?\s)))
+                      (cond
+                       ((h5-io-group-p obj)
+                        (insert (format "%s[Group] %s\n" indent path))
+                        (when (h5-io-group-attributes obj)
+                          (dolist (attr (h5-io-group-attributes obj))
+                            (insert (format "%s  Attr: %s = %s\n"
+                                          indent
+                                          (h5-io-attribute-name attr)
+                                          (h5-io-attribute-data attr))))))
+                       ((h5-io-dataset-p obj)
+                        (insert (format "%s[Dataset] %s" indent path))
+                        (when (h5-io-dataset-dataspace obj)
+                          (let ((dims (h5-io-dataspace-dimensions
+                                      (h5-io-dataset-dataspace obj))))
+                            (when dims
+                              (insert (format " %s" dims)))))
+                        (insert "\n")
+                        (when (h5-io-dataset-attributes obj)
+                          (dolist (attr (h5-io-dataset-attributes obj))
+                            (insert (format "%s  Attr: %s = %s\n"
+                                          indent
+                                          (h5-io-attribute-name attr)
+                                          (h5-io-attribute-data attr)))))))
+                      ;; Track object for later retrieval
+                      (push (list line-num path obj) h5-objects-list)))))
     (setq h5-objects-list (nreverse h5-objects-list))
     (goto-char (point-min))))
 
@@ -329,6 +370,45 @@ Returns (path . object) or nil if no object at point."
               (display-buffer buf))
           (message "No results found for: %s" search-term)))
     (error "No HDF5 file is currently open")))
+
+(defun h5-show-all-levels ()
+  "Show all levels in the HDF5 file structure."
+  (interactive)
+  (when h5-current-file
+    (setq h5-show-depth nil)
+    (h5-display-file-structure h5-current-file)
+    (message "Showing all levels")))
+
+(defun h5-show-level-1 ()
+  "Show only top-level (depth 1) groups and datasets."
+  (interactive)
+  (when h5-current-file
+    (setq h5-show-depth 1)
+    (h5-display-file-structure h5-current-file)
+    (message "Showing depth 1 (top-level only)")))
+
+(defun h5-show-level-2 ()
+  "Show up to depth 2 groups and datasets."
+  (interactive)
+  (when h5-current-file
+    (setq h5-show-depth 2)
+    (h5-display-file-structure h5-current-file)
+    (message "Showing depth 2")))
+
+(defun h5-show-level-3 ()
+  "Show up to depth 3 groups and datasets."
+  (interactive)
+  (when h5-current-file
+    (setq h5-show-depth 3)
+    (h5-display-file-structure h5-current-file)
+    (message "Showing depth 3")))
+
+(defun h5-refresh ()
+  "Refresh the HDF5 file display."
+  (interactive)
+  (when h5-current-file
+    (h5-display-file-structure h5-current-file)
+    (message "Refreshed")))
 
 (defun h5-next-line ()
   "Move to next line in h5-mode."
