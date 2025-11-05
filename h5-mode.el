@@ -42,7 +42,8 @@
     ;; Refresh
     (define-key map "g" 'h5-refresh)
     ;; Quit
-    (define-key map "q" 'quit-window))
+    (define-key map "q" 'quit-window)
+    map)  ; Return the keymap
   "Keymap for h5-mode.")
 
 (define-derived-mode h5-mode special-mode "h5"
