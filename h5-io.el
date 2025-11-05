@@ -285,10 +285,12 @@ For initial display of superblock and top-level groups, 1MB is usually sufficien
   (let* ((buf (generate-new-buffer (format " *h5-io-%s*" filename)))
          (file (make-h5-io-file :path filename :buffer buf))
          (read-size (or max-bytes 1048576)))  ; Default 1MB
+    (message "h5-io-open: Reading %s bytes from %s" read-size filename)
     (with-current-buffer buf
       (set-buffer-multibyte nil)
       ;; Only read the first portion of the file, not the entire file
       (insert-file-contents-literally filename nil 0 read-size)
+      (message "h5-io-open: Buffer size after read: %d bytes" (buffer-size))
       (setf (h5-io-file-superblock file) (h5-io--read-superblock))
       (when (h5-io-file-superblock file)
         (setf (h5-io-file-root-group file)
