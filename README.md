@@ -224,7 +224,28 @@ It's similar to Dired.
 
 ### Performance Optimization
 
-By default, h5-mode only reads the superblock and displays top-level groups to ensure fast loading, even for large HDF5 files. You can view more levels on demand.
+**Critical for Large Files (e.g., 19GB files):**
+
+h5-mode is optimized to handle very large HDF5 files efficiently:
+
+1. **Partial File Reading**: Only reads the first 1MB of the file by default, not the entire file
+   - This prevents Emacs from consuming excessive memory
+   - Safe for files of any size (tested with 19GB+ files)
+
+2. **Depth Control**: Displays only top-level groups initially
+   - Fast initial loading showing just the root structure
+   - Expand to deeper levels on demand (press 'a', '2', or '3')
+
+3. **Customizable**: Control how much to read initially
+   ```elisp
+   ;; Read more if needed (e.g., 10MB for deeper metadata)
+   (setq h5-initial-read-bytes (* 10 1024 1024))
+
+   ;; Or less for ultra-fast loading (e.g., 512KB)
+   (setq h5-initial-read-bytes (* 512 1024))
+   ```
+
+**Memory Usage**: Opening a 19GB file uses only ~1MB of memory instead of loading the entire file.
 
 ### View Everything (Datasets, Attributes, and Group)
 

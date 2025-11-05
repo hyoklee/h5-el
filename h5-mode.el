@@ -17,6 +17,22 @@
   :prefix "h5-"
   :group 'data)
 
+(defcustom h5-initial-read-bytes (* 1024 1024)
+  "Number of bytes to read initially when opening an HDF5 file.
+Default is 1MB (1048576 bytes), which is sufficient for reading
+the superblock and top-level group metadata without loading the
+entire file into memory.
+
+This prevents Emacs from consuming excessive memory when opening
+large HDF5 files (e.g., 19GB files).
+
+Increase this value if you need to access metadata deeper in the
+file structure, or set to nil to read the entire file (not recommended
+for large files)."
+  :type '(choice (integer :tag "Bytes to read")
+                 (const :tag "Read entire file" nil))
+  :group 'h5)
+
 (defvar h5-mode-map
   (let ((map (make-keymap)))
     (suppress-keymap map)
@@ -61,7 +77,7 @@ Key bindings:
              (file-exists-p buffer-file-name))
     (condition-case err
         (progn
-          (setq h5-current-file (h5-io-open buffer-file-name))
+          (setq h5-current-file (h5-io-open buffer-file-name h5-initial-read-bytes))
           ;; Show only top-level by default for faster loading
           (h5-display-file-structure h5-current-file 1))
       (error
@@ -89,7 +105,7 @@ Behavior depends on the object type at point."
                       (read-file-name "HDF5 file: " nil nil t))))
     (if (not h5-current-file)
         (progn
-          (setq h5-current-file (h5-io-open filename))
+          (setq h5-current-file (h5-io-open filename h5-initial-read-bytes))
           ;; Show only top-level by default for faster loading
           (h5-display-file-structure h5-current-file 1))
       (h5-view-object-at-point))))
