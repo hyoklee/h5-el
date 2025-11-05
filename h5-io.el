@@ -272,14 +272,23 @@ Returns a list of byte values."
 ;;; Reading Functions
 ;;; ============================================================================
 
-(defun h5-io-open (filename)
+(defun h5-io-open (filename &optional max-bytes)
   "Open HDF5 file FILENAME for reading.
-Returns an h5-io-file structure."
+Returns an h5-io-file structure.
+
+Optional MAX-BYTES limits how many bytes to read from the file.
+If nil, reads only the first 1MB (1048576 bytes) by default.
+This prevents loading huge files entirely into memory.
+Use a larger value if you need to access data deeper in the file.
+
+For initial display of superblock and top-level groups, 1MB is usually sufficient."
   (let* ((buf (generate-new-buffer (format " *h5-io-%s*" filename)))
-         (file (make-h5-io-file :path filename :buffer buf)))
+         (file (make-h5-io-file :path filename :buffer buf))
+         (read-size (or max-bytes 1048576)))  ; Default 1MB
     (with-current-buffer buf
       (set-buffer-multibyte nil)
-      (insert-file-contents-literally filename)
+      ;; Only read the first portion of the file, not the entire file
+      (insert-file-contents-literally filename nil 0 read-size)
       (setf (h5-io-file-superblock file) (h5-io--read-superblock))
       (when (h5-io-file-superblock file)
         (setf (h5-io-file-root-group file)

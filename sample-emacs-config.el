@@ -51,6 +51,24 @@
 ;; Performance Settings
 ;; ============================================================================
 
+;; CRITICAL: Partial File Reading (prevents loading entire large files)
+;; By default, h5-mode reads only the first 1MB of the file.
+;; This is essential for handling large files (e.g., 19GB) without
+;; consuming all available memory.
+
+;; Default: 1MB (recommended for most use cases)
+;; (setq h5-initial-read-bytes (* 1024 1024))
+
+;; For deeper metadata access, increase the read size:
+;; (setq h5-initial-read-bytes (* 10 1024 1024))  ; 10MB
+
+;; For ultra-fast loading, decrease the read size:
+;; (setq h5-initial-read-bytes (* 512 1024))  ; 512KB
+
+;; To read entire file (NOT recommended for large files):
+;; (setq h5-initial-read-bytes nil)
+
+;; View Depth Control
 ;; By default, h5-mode shows only top-level groups for faster loading.
 ;; You can customize this behavior:
 
@@ -146,16 +164,25 @@
 ;; 3. Check auto-mode-alist: M-: auto-mode-alist
 ;; 4. Force h5-mode: M-x h5-mode
 ;;
-;; If loading is too slow:
+;; If loading consumes too much memory or is too slow:
 ;;
-;; 1. The default depth is 1 (top-level only)
-;; 2. For very large files, h5-io still reads the superblock
-;; 3. The full file walk is filtered by depth, so only matching objects are displayed
+;; 1. CRITICAL: By default, only 1MB is read - this should be fast
+;; 2. Check h5-initial-read-bytes value: M-: h5-initial-read-bytes
+;; 3. Reduce if needed: (setq h5-initial-read-bytes (* 512 1024))
+;; 4. The default depth is 1 (top-level only) for faster display
+;; 5. Only the beginning of the file is loaded, not the entire file
+;;
+;; If Emacs hangs or runs out of memory:
+;;
+;; 1. Make sure h5-initial-read-bytes is NOT nil (which reads entire file)
+;; 2. Default value should be 1048576 (1MB)
+;; 3. For 19GB files, 1MB is sufficient for superblock and top-level metadata
 ;;
 ;; If you see errors:
 ;;
 ;; 1. Ensure h5-io.el is in the same directory as h5-mode.el
 ;; 2. Check that the file is a valid HDF5 file
 ;; 3. Look for error messages in *Messages* buffer (C-h e)
+;; 4. If metadata is deeper in file, increase h5-initial-read-bytes
 
 ;;; sample-emacs-config.el ends here
