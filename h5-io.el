@@ -350,26 +350,57 @@ Returns an h5-io-superblock structure or nil if invalid."
            (sb (make-h5-io-superblock)))
       (cond
        ((or (= version 0) (= version 1))
+        ;; Superblock v0/v1 layout:
+        ;; Offset 0-7: Signature
+        ;; Offset 8: Version
+        ;; Offset 9-12: Version info
+        ;; Offset 13: Size of offsets
+        ;; Offset 14: Size of lengths
+        ;; Offset 15: Reserved
+        ;; Offset 16-17: Group leaf node K
+        ;; Offset 18-19: Group internal node K
+        ;; Offset 20-23: File consistency flags
+        ;; Offset 24-31: Base address (8 bytes)
+        ;; Offset 32-39: Free space address (8 bytes)
+        ;; Offset 40-47: End-of-file address (8 bytes)
+        ;; Offset 48-55: Driver info address (8 bytes)
+        ;; Offset 56-95: Root group symbol table entry (40 bytes)
+        ;;   Offset 56-63: Link name offset (8 bytes)
+        ;;   Offset 64-71: Object header address (8 bytes) <- ROOT GROUP!
+        ;;   Offset 72-75: Cache type (4 bytes)
+        ;;   Offset 76-79: Reserved (4 bytes)
+        ;;   Offset 80-95: Scratch pad (16 bytes)
         (setf (h5-io-superblock-version sb) version)
         (setf (h5-io-superblock-size-of-offsets sb) (h5-io--read-uint8 14))
         (setf (h5-io-superblock-size-of-lengths sb) (h5-io--read-uint8 15))
         (setf (h5-io-superblock-group-leaf-node-k sb) (h5-io--read-uint16-le 18))
         (setf (h5-io-superblock-group-internal-node-k sb) (h5-io--read-uint16-le 20))
-        (setf (h5-io-superblock-base-address sb) (h5-io--read-uint64-le 24))
-        (setf (h5-io-superblock-end-of-file-address sb) (h5-io--read-uint64-le 40))
+        (setf (h5-io-superblock-base-address sb) (h5-io--read-uint64-le 25))
+        (setf (h5-io-superblock-end-of-file-address sb) (h5-io--read-uint64-le 41))
         (setf (h5-io-superblock-root-group-object-header-address sb)
-              (h5-io--read-uint64-le 48))
+              (h5-io--read-uint64-le 65))
         sb)
        ((or (= version 2) (= version 3))
+        ;; Superblock v2/3 layout:
+        ;; Offset 0-7: Signature
+        ;; Offset 8: Version
+        ;; Offset 9: Size of offsets
+        ;; Offset 10: Size of lengths
+        ;; Offset 11: Flags
+        ;; Offset 12-19: Base address (8 bytes)
+        ;; Offset 20-27: Superblock extension address (8 bytes)
+        ;; Offset 28-35: End of file address (8 bytes)
+        ;; Offset 36-43: Root group object header address (8 bytes)
+        ;; Offset 44-47: Checksum (4 bytes)
         (setf (h5-io-superblock-version sb) version)
         (setf (h5-io-superblock-size-of-offsets sb) (h5-io--read-uint8 10))
         (setf (h5-io-superblock-size-of-lengths sb) (h5-io--read-uint8 11))
-        (setf (h5-io-superblock-base-address sb) (h5-io--read-uint64-le 16))
+        (setf (h5-io-superblock-base-address sb) (h5-io--read-uint64-le 13))
         (setf (h5-io-superblock-superblock-extension-address sb)
-              (h5-io--read-uint64-le 24))
-        (setf (h5-io-superblock-end-of-file-address sb) (h5-io--read-uint64-le 32))
+              (h5-io--read-uint64-le 21))
+        (setf (h5-io-superblock-end-of-file-address sb) (h5-io--read-uint64-le 29))
         (setf (h5-io-superblock-root-group-object-header-address sb)
-              (h5-io--read-uint64-le 40))
+              (h5-io--read-uint64-le 37))
         sb)
        (t
         (error "Unsupported superblock version: %d" version))))))
