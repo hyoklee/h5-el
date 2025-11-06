@@ -27,8 +27,9 @@
 ;;; Constants
 ;;; ============================================================================
 
-(defconst h5-io-signature "\211HDF\r\n\032\n"
-  "HDF5 file format signature (8 bytes).")
+(defconst h5-io-signature '(137 72 68 70 13 10 26 10)
+  "HDF5 file format signature (8 bytes as list of integers).
+Corresponds to: 0x89 'H' 'D' 'F' 0x0D 0x0A 0x1A 0x0A")
 
 (defconst h5-io-undefined-address #xFFFFFFFFFFFFFFFF
   "Undefined address value in HDF5.")
@@ -343,9 +344,10 @@ For initial display of superblock and top-level groups, 1MB is usually sufficien
   "Read the HDF5 superblock from current buffer.
 Returns an h5-io-superblock structure or nil if invalid."
   (goto-char 1)
-  (let ((sig (buffer-substring 1 9)))
-    (unless (string= sig h5-io-signature)
-      (error "Invalid HDF5 file signature"))
+  (let ((sig-bytes (h5-io--read-bytes 1 8)))
+    (unless (equal sig-bytes h5-io-signature)
+      (error "Invalid HDF5 file signature. Expected %s, got %s"
+             h5-io-signature sig-bytes))
     (let* ((version (h5-io--read-uint8 9))
            (sb (make-h5-io-superblock)))
       (cond
@@ -763,8 +765,9 @@ Returns an h5-io-file structure."
   "Write HDF5 superblock to FILE buffer."
   (with-current-buffer (h5-io-file-buffer file)
     (goto-char (point-min))
-    ;; HDF5 format signature
-    (insert h5-io-signature)
+    ;; HDF5 format signature - write as individual bytes
+    (dolist (byte h5-io-signature)
+      (h5-io--write-uint8 byte))
     ;; Version 0 superblock for simplicity
     (h5-io--write-uint8 0)  ; Version
     (h5-io--write-uint8 0)  ; Free space storage version
@@ -879,7 +882,8 @@ Returns an h5-io-dataset structure with data."
 (defun h5-io-save (file)
   "Save FILE to disk."
   (with-current-buffer (h5-io-file-buffer file)
-    (write-region (point-min) (point-max) (h5-io-file-path file) nil 'no-message)))
+    (let ((coding-system-for-write 'no-conversion))
+      (write-region (point-min) (point-max) (h5-io-file-path file) nil 'no-message))))
 
 (defun h5-io--read-dataset (address name)
   "Read dataset at ADDRESS with NAME.

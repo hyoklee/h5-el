@@ -172,6 +172,24 @@ file.Walk(func(path string, obj hdf5.Object) {
     (h5-io-close file)))
 ```
 
+### Testing
+
+Two test scripts are provided to verify the implementation:
+
+#### verify-signature.el
+Tests that the HDF5 file signature is written and read correctly:
+```elisp
+(load-file "verify-signature.el")
+;; Creates a test file and verifies the signature bytes
+```
+
+#### test-h5-io.el
+Tests the complete write/read cycle:
+```elisp
+(load-file "test-h5-io.el")
+;; Creates a file with a dataset, saves it, then reads it back
+```
+
 ### Implementation Status
 
 #### Implemented
@@ -181,6 +199,7 @@ file.Walk(func(path string, obj hdf5.Object) {
 - ✅ High-level read/write API
 - ✅ File creation and superblock writing
 - ✅ Dataset and attribute structures
+- ✅ Correct binary file handling with proper encoding
 
 #### Planned
 - 🔄 Full object header parsing
