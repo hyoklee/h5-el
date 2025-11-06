@@ -534,6 +534,7 @@ Object header v2 format (HDF5 >= 1.8):
 
       ;; Read messages until we reach the checksum (4 bytes before end of chunk)
       (let ((messages nil)
+            (continuations nil)
             (chunk-end (+ (1+ address) 4 2 chunk0-size)))  ; signature(4) + version(1) + flags(1) + optional + size + chunk0-size
 
         ;; Adjust chunk-end for optional fields
@@ -555,10 +556,76 @@ Object header v2 format (HDF5 >= 1.8):
               (if (= msg-type h5-io-msg-nil)
                   (setq pos chunk-end)  ; Exit loop
                 (progn
-                  (push (cons msg-type msg-data-pos) messages)
+                  ;; Collect continuation messages separately
+                  (if (= msg-type h5-io-msg-object-header-continuation)
+                      (push msg-data-pos continuations)
+                    (push (cons msg-type msg-data-pos) messages))
                   (setq pos (+ msg-data-pos msg-size)))))))
 
+        ;; Read continuation chunks
+        (dolist (cont-pos continuations)
+          (let ((cont-addr (h5-io--read-uint64-le cont-pos))
+                (cont-size (h5-io--read-uint64-le (+ cont-pos 8))))
+            (when (and cont-addr (not (= cont-addr h5-io-undefined-address)))
+              (condition-case nil
+                  (let ((cont-messages (h5-io--read-object-header-continuation-v2 cont-addr cont-size)))
+                    (setq messages (append messages cont-messages)))
+                (error nil)))))
+
         (nreverse messages)))))
+
+(defun h5-io--read-object-header-continuation-v2 (address size)
+  "Read object header continuation chunk at ADDRESS with SIZE.
+Returns a list of messages as (type . data-position) pairs.
+Continuation chunk format:
+- Signature: 'OCHK' (4 bytes)
+- Messages (packed, no 8-byte alignment)
+- Checksum (4 bytes)"
+  (goto-char (1+ address))
+
+  ;; Read and validate OCHK signature
+  (let ((sig-bytes (list
+                    (h5-io--read-uint8 (1+ address))
+                    (h5-io--read-uint8 (+ address 2))
+                    (h5-io--read-uint8 (+ address 3))
+                    (h5-io--read-uint8 (+ address 4)))))
+    (unless (equal sig-bytes '(79 67 72 75))  ; 'O' 'C' 'H' 'K'
+      (error "Invalid OCHK signature at address %d, got %S" address sig-bytes))
+
+    (let ((messages nil)
+          (continuations nil)
+          (pos (+ address 5))  ; Start after signature
+          (chunk-end (+ address size)))
+
+    ;; Read messages until we reach the checksum (4 bytes before end)
+    (while (< (+ pos 4) (- chunk-end 4))
+      (when (< pos (point-max))
+        (let* ((msg-type (h5-io--read-uint8 pos))
+               (msg-size (h5-io--read-uint16-le (+ pos 1)))
+               (msg-flags (h5-io--read-uint8 (+ pos 3)))
+               (msg-data-pos (+ pos 4)))
+
+          ;; Stop if we hit a NIL message (padding)
+          (if (= msg-type h5-io-msg-nil)
+              (setq pos chunk-end)  ; Exit loop
+            (progn
+              ;; Collect continuation messages separately for recursive reading
+              (if (= msg-type h5-io-msg-object-header-continuation)
+                  (push msg-data-pos continuations)
+                (push (cons msg-type msg-data-pos) messages))
+              (setq pos (+ msg-data-pos msg-size)))))))
+
+      ;; Read nested continuation chunks recursively
+      (dolist (cont-pos continuations)
+        (let ((cont-addr (h5-io--read-uint64-le cont-pos))
+              (cont-size (h5-io--read-uint64-le (+ cont-pos 8))))
+          (when (and cont-addr (not (= cont-addr h5-io-undefined-address)))
+            (condition-case nil
+                (let ((cont-messages (h5-io--read-object-header-continuation-v2 cont-addr cont-size)))
+                  (setq messages (append messages cont-messages)))
+              (error nil)))))
+
+      (nreverse messages)))
 
 (defun h5-io--find-message (messages msg-type)
   "Find first message of MSG-TYPE in MESSAGES."
