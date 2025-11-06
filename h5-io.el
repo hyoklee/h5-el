@@ -34,6 +34,34 @@
   "Undefined address value in HDF5.")
 
 ;;; ============================================================================
+;;; Object Header Message Types
+;;; ============================================================================
+
+(defconst h5-io-msg-nil #x0000 "NIL message.")
+(defconst h5-io-msg-dataspace #x0001 "Dataspace message.")
+(defconst h5-io-msg-link-info #x0002 "Link info message.")
+(defconst h5-io-msg-datatype #x0003 "Datatype message.")
+(defconst h5-io-msg-fill-value-old #x0004 "Old fill value message.")
+(defconst h5-io-msg-fill-value #x0005 "Fill value message.")
+(defconst h5-io-msg-link #x0006 "Link message.")
+(defconst h5-io-msg-external-files #x0007 "External data files message.")
+(defconst h5-io-msg-data-layout #x0008 "Data layout message.")
+(defconst h5-io-msg-bogus #x0009 "Bogus message.")
+(defconst h5-io-msg-group-info #x000A "Group info message.")
+(defconst h5-io-msg-filter-pipeline #x000B "Filter pipeline message.")
+(defconst h5-io-msg-attribute #x000C "Attribute message.")
+(defconst h5-io-msg-object-comment #x000D "Object comment message.")
+(defconst h5-io-msg-object-modification-time-old #x000E "Old modification time.")
+(defconst h5-io-msg-shared-message-table #x000F "Shared message table.")
+(defconst h5-io-msg-object-header-continuation #x0010 "Object header continuation.")
+(defconst h5-io-msg-symbol-table #x0011 "Symbol table message.")
+(defconst h5-io-msg-object-modification-time #x0012 "Object modification time.")
+(defconst h5-io-msg-btree-k-values #x0013 "B-tree k values message.")
+(defconst h5-io-msg-driver-info #x0014 "Driver info message.")
+(defconst h5-io-msg-attribute-info #x0015 "Attribute info message.")
+(defconst h5-io-msg-object-reference-count #x0016 "Object reference count.")
+
+;;; ============================================================================
 ;;; Data Types
 ;;; ============================================================================
 
@@ -268,6 +296,20 @@ Returns a list of byte values."
   dataspace
   data)
 
+(cl-defstruct h5-io-symbol-table-entry
+  "HDF5 symbol table entry structure."
+  link-name-offset
+  object-header-address
+  cache-type
+  scratch-pad)
+
+(cl-defstruct h5-io-local-heap
+  "HDF5 local heap structure."
+  address
+  data-segment-size
+  offset-to-head-free-list
+  address-of-data-segment)
+
 ;;; ============================================================================
 ;;; Reading Functions
 ;;; ============================================================================
@@ -338,18 +380,129 @@ Returns an h5-io-group structure."
   (let* ((sb (h5-io-file-superblock file))
          (addr (h5-io-superblock-root-group-object-header-address sb)))
     (when (and addr (not (= addr h5-io-undefined-address)))
-      (with-current-buffer (h5-io-file-buffer file)
-        (h5-io--read-group addr "/")))))
+      (h5-io--read-group addr "/" file))))
 
-(defun h5-io--read-group (address name)
-  "Read a group at ADDRESS with NAME from current buffer.
-Returns an h5-io-group structure."
-  (let ((group (make-h5-io-group :name name)))
-    ;; Simplified: just create empty group
-    ;; Full implementation would read object header and parse messages
-    (setf (h5-io-group-children group) nil)
-    (setf (h5-io-group-attributes group) nil)
-    group))
+(defun h5-io--read-local-heap (address)
+  "Read local heap at ADDRESS.
+Returns an h5-io-local-heap structure."
+  (goto-char (1+ address))  ; +1 for 1-indexed Emacs positions
+  (let ((signature (buffer-substring (point) (+ (point) 4))))
+    (unless (string= signature "HEAP")
+      (error "Invalid local heap signature at %d" address))
+    (let ((heap (make-h5-io-local-heap :address address)))
+      (setf (h5-io-local-heap-data-segment-size heap)
+            (h5-io--read-uint64-le (+ address 9)))
+      (setf (h5-io-local-heap-offset-to-head-free-list heap)
+            (h5-io--read-uint64-le (+ address 17)))
+      (setf (h5-io-local-heap-address-of-data-segment heap)
+            (h5-io--read-uint64-le (+ address 25)))
+      heap)))
+
+(defun h5-io--read-string-from-heap (heap offset)
+  "Read null-terminated string from HEAP at OFFSET."
+  (when (and heap offset)
+    (let* ((data-addr (h5-io-local-heap-address-of-data-segment heap))
+           (str-pos (+ data-addr offset 1))
+           (chars nil))
+      (goto-char str-pos)
+      (while (and (< (point) (point-max))
+                  (not (zerop (char-after))))
+        (push (char-after) chars)
+        (forward-char 1))
+      (apply #'string (nreverse chars)))))
+
+(defun h5-io--read-symbol-table-entry (pos heap)
+  "Read symbol table entry at POS using HEAP for names.
+Returns (name . address) pair."
+  (let* ((link-name-offset (h5-io--read-uint64-le pos))
+         (obj-header-addr (h5-io--read-uint64-le (+ pos 8)))
+         (name (h5-io--read-string-from-heap heap link-name-offset)))
+    (when (and name (not (= obj-header-addr h5-io-undefined-address)))
+      (cons name obj-header-addr))))
+
+(defun h5-io--read-object-header-v1 (address)
+  "Read object header version 1 at ADDRESS.
+Returns a list of messages as (type . data) pairs."
+  (goto-char (1+ address))
+  (let* ((version (h5-io--read-uint8 (1+ address)))
+         (num-messages (h5-io--read-uint16-le (+ address 3)))
+         (obj-ref-count (h5-io--read-uint32-le (+ address 5)))
+         (obj-header-size (h5-io--read-uint32-le (+ address 9)))
+         (messages nil)
+         (pos (+ address 16)))  ; Start of messages (after 16-byte header)
+
+    (dotimes (_ num-messages)
+      (when (< pos (point-max))
+        (let* ((msg-type (h5-io--read-uint16-le pos))
+               (msg-size (h5-io--read-uint16-le (+ pos 2)))
+               (msg-flags (h5-io--read-uint8 (+ pos 4)))
+               (msg-data-pos (+ pos 8))
+               (msg-data (cons msg-type msg-data-pos)))
+          (push msg-data messages)
+          (setq pos (+ msg-data-pos msg-size))
+          ;; Align to 8-byte boundary
+          (setq pos (+ pos (mod (- 8 (mod pos 8)) 8))))))
+    (nreverse messages)))
+
+(defun h5-io--find-message (messages msg-type)
+  "Find first message of MSG-TYPE in MESSAGES."
+  (cl-find-if (lambda (msg) (= (car msg) msg-type)) messages))
+
+(defun h5-io--read-symbol-table-message (msg-pos)
+  "Read symbol table message at MSG-POS.
+Returns (btree-address . heap-address) pair."
+  (let ((btree-addr (h5-io--read-uint64-le msg-pos))
+        (heap-addr (h5-io--read-uint64-le (+ msg-pos 8))))
+    (cons btree-addr heap-addr)))
+
+(defun h5-io--read-symbol-table-node (address heap)
+  "Read symbol table node at ADDRESS using HEAP.
+Returns list of (name . obj-address) pairs."
+  (goto-char (1+ address))
+  (let ((signature (buffer-substring (point) (+ (point) 4))))
+    (unless (string= signature "SNOD")
+      (error "Invalid symbol table node signature at %d" address))
+    (let* ((version (h5-io--read-uint8 (+ address 5)))
+           (num-symbols (h5-io--read-uint16-le (+ address 8)))
+           (entries nil)
+           (pos (+ address 16)))  ; Start of entries
+
+      (dotimes (_ num-symbols)
+        (when (< pos (point-max))
+          (let ((entry (h5-io--read-symbol-table-entry pos heap)))
+            (when entry
+              (push entry entries))
+            (setq pos (+ pos 40)))))  ; Each entry is 40 bytes
+      (nreverse entries))))
+
+(defun h5-io--read-group (address name file)
+  "Read a group at ADDRESS with NAME from FILE.
+Returns an h5-io-group structure with children populated."
+  (with-current-buffer (h5-io-file-buffer file)
+    (let ((group (make-h5-io-group :name name))
+          (messages (condition-case nil
+                        (h5-io--read-object-header-v1 address)
+                      (error nil))))
+
+      (when messages
+        ;; Look for symbol table message
+        (let ((sym-table-msg (h5-io--find-message messages h5-io-msg-symbol-table)))
+          (when sym-table-msg
+            (let* ((sym-table-data (h5-io--read-symbol-table-message (cdr sym-table-msg)))
+                   (btree-addr (car sym-table-data))
+                   (heap-addr (cdr sym-table-data))
+                   (heap (condition-case nil
+                             (h5-io--read-local-heap heap-addr)
+                           (error nil))))
+
+              (when heap
+                ;; For simple groups, the btree-addr points to a symbol table node
+                (let ((children-entries (condition-case nil
+                                            (h5-io--read-symbol-table-node btree-addr heap)
+                                          (error nil))))
+                  (setf (h5-io-group-children group) children-entries)))))))
+
+      group)))
 
 (defun h5-io-close (file)
   "Close HDF5 FILE and cleanup resources."
@@ -507,6 +660,49 @@ Returns an h5-io-dataset structure with data."
   (with-current-buffer (h5-io-file-buffer file)
     (write-region (point-min) (point-max) (h5-io-file-path file) nil 'no-message)))
 
+(defun h5-io--read-dataset (address name)
+  "Read dataset at ADDRESS with NAME.
+Returns an h5-io-dataset structure."
+  (condition-case nil
+      (let* ((messages (h5-io--read-object-header-v1 address))
+             (dataset (make-h5-io-dataset :name name)))
+        ;; Look for dataspace message
+        (let ((dataspace-msg (h5-io--find-message messages h5-io-msg-dataspace)))
+          (when dataspace-msg
+            (setf (h5-io-dataset-dataspace dataset)
+                  (h5-io--read-dataspace-message (cdr dataspace-msg)))))
+        ;; Look for datatype message
+        (let ((datatype-msg (h5-io--find-message messages h5-io-msg-datatype)))
+          (when datatype-msg
+            (setf (h5-io-dataset-datatype dataset)
+                  (h5-io--read-datatype-message (cdr datatype-msg)))))
+        dataset)
+    (error nil)))
+
+(defun h5-io--read-dataspace-message (msg-pos)
+  "Read dataspace message at MSG-POS.
+Returns an h5-io-dataspace structure."
+  (let* ((version (h5-io--read-uint8 msg-pos))
+         (dimensionality (h5-io--read-uint8 (+ msg-pos 1)))
+         (flags (h5-io--read-uint8 (+ msg-pos 2)))
+         (dataspace (make-h5-io-dataspace :rank dimensionality)))
+    (when (> dimensionality 0)
+      (let ((dims nil)
+            (pos (+ msg-pos 8)))  ; Skip to dimension sizes
+        (dotimes (i dimensionality)
+          (push (h5-io--read-uint64-le pos) dims)
+          (setq pos (+ pos 8)))
+        (setf (h5-io-dataspace-dimensions dataspace) (nreverse dims))))
+    dataspace))
+
+(defun h5-io--read-datatype-message (msg-pos)
+  "Read datatype message at MSG-POS.
+Returns an h5-io-datatype structure."
+  (let* ((class-and-version (h5-io--read-uint32-le msg-pos))
+         (class (logand class-and-version #xFF))
+         (datatype (make-h5-io-datatype :class class :size 0)))
+    datatype))
+
 ;;; ============================================================================
 ;;; High-level API
 ;;; ============================================================================
@@ -515,9 +711,38 @@ Returns an h5-io-dataset structure with data."
   "Walk through all objects in FILE, calling FUNCTION with (path object).
 FUNCTION receives path as string and object as h5-io-group or h5-io-dataset."
   (when (h5-io-file-root-group file)
-    (funcall function "/" (h5-io-file-root-group file))
-    ;; Would recursively walk children in full implementation
-    ))
+    (h5-io--walk-recursive file "/" (h5-io-file-root-group file) function (make-hash-table :test 'equal))))
+
+(defun h5-io--walk-recursive (file path group function visited)
+  "Recursively walk GROUP at PATH, calling FUNCTION for each object.
+VISITED is a hash table to track visited addresses and avoid cycles."
+  (funcall function path group)
+
+  (when (h5-io-group-children group)
+    (dolist (child (h5-io-group-children group))
+      (let* ((child-name (car child))
+             (child-addr (cdr child))
+             (child-path (if (string= path "/")
+                            (concat "/" child-name)
+                          (concat path "/" child-name))))
+
+        ;; Check if we've already visited this address (avoid cycles)
+        (unless (gethash child-addr visited)
+          (puthash child-addr t visited)
+
+          ;; Try to read as group or dataset
+          (with-current-buffer (h5-io-file-buffer file)
+            (condition-case nil
+                (let ((child-obj (h5-io--read-group child-addr child-name file)))
+                  (when child-obj
+                    (h5-io--walk-recursive file child-path child-obj function visited)))
+              ;; If it's not a group, try as dataset
+              (error
+               (condition-case nil
+                   (let ((dataset (h5-io--read-dataset child-addr child-name)))
+                     (when dataset
+                       (funcall function child-path dataset)))
+                 (error nil))))))))))
 
 ;;; ============================================================================
 ;;; Example Usage
