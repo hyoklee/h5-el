@@ -569,7 +569,9 @@ Object header v2 format (HDF5 >= 1.8):
             (when (and cont-addr (not (= cont-addr h5-io-undefined-address)))
               (condition-case nil
                   (let ((cont-messages (h5-io--read-object-header-continuation-v2 cont-addr cont-size)))
-                    (setq messages (append messages cont-messages)))
+                    (when cont-messages
+                      (dolist (msg cont-messages)
+                        (push msg messages))))
                 (error nil)))))
 
         (nreverse messages)))))
@@ -622,7 +624,9 @@ Continuation chunk format:
           (when (and cont-addr (not (= cont-addr h5-io-undefined-address)))
             (condition-case nil
                 (let ((cont-messages (h5-io--read-object-header-continuation-v2 cont-addr cont-size)))
-                  (setq messages (append messages cont-messages)))
+                  (when cont-messages
+                    (dolist (msg cont-messages)
+                      (push msg messages))))
               (error nil)))))
 
       (nreverse messages)))
