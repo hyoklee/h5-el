@@ -350,26 +350,57 @@ Returns an h5-io-superblock structure or nil if invalid."
            (sb (make-h5-io-superblock)))
       (cond
        ((or (= version 0) (= version 1))
+        ;; Superblock v0/v1 layout:
+        ;; Offset 0-7: Signature
+        ;; Offset 8: Version
+        ;; Offset 9-12: Version info
+        ;; Offset 13: Size of offsets
+        ;; Offset 14: Size of lengths
+        ;; Offset 15: Reserved
+        ;; Offset 16-17: Group leaf node K
+        ;; Offset 18-19: Group internal node K
+        ;; Offset 20-23: File consistency flags
+        ;; Offset 24-31: Base address (8 bytes)
+        ;; Offset 32-39: Free space address (8 bytes)
+        ;; Offset 40-47: End-of-file address (8 bytes)
+        ;; Offset 48-55: Driver info address (8 bytes)
+        ;; Offset 56-95: Root group symbol table entry (40 bytes)
+        ;;   Offset 56-63: Link name offset (8 bytes)
+        ;;   Offset 64-71: Object header address (8 bytes) <- ROOT GROUP!
+        ;;   Offset 72-75: Cache type (4 bytes)
+        ;;   Offset 76-79: Reserved (4 bytes)
+        ;;   Offset 80-95: Scratch pad (16 bytes)
         (setf (h5-io-superblock-version sb) version)
         (setf (h5-io-superblock-size-of-offsets sb) (h5-io--read-uint8 14))
         (setf (h5-io-superblock-size-of-lengths sb) (h5-io--read-uint8 15))
         (setf (h5-io-superblock-group-leaf-node-k sb) (h5-io--read-uint16-le 18))
         (setf (h5-io-superblock-group-internal-node-k sb) (h5-io--read-uint16-le 20))
-        (setf (h5-io-superblock-base-address sb) (h5-io--read-uint64-le 24))
-        (setf (h5-io-superblock-end-of-file-address sb) (h5-io--read-uint64-le 40))
+        (setf (h5-io-superblock-base-address sb) (h5-io--read-uint64-le 25))
+        (setf (h5-io-superblock-end-of-file-address sb) (h5-io--read-uint64-le 41))
         (setf (h5-io-superblock-root-group-object-header-address sb)
-              (h5-io--read-uint64-le 48))
+              (h5-io--read-uint64-le 65))
         sb)
        ((or (= version 2) (= version 3))
+        ;; Superblock v2/3 layout:
+        ;; Offset 0-7: Signature
+        ;; Offset 8: Version
+        ;; Offset 9: Size of offsets
+        ;; Offset 10: Size of lengths
+        ;; Offset 11: Flags
+        ;; Offset 12-19: Base address (8 bytes)
+        ;; Offset 20-27: Superblock extension address (8 bytes)
+        ;; Offset 28-35: End of file address (8 bytes)
+        ;; Offset 36-43: Root group object header address (8 bytes)
+        ;; Offset 44-47: Checksum (4 bytes)
         (setf (h5-io-superblock-version sb) version)
         (setf (h5-io-superblock-size-of-offsets sb) (h5-io--read-uint8 10))
         (setf (h5-io-superblock-size-of-lengths sb) (h5-io--read-uint8 11))
-        (setf (h5-io-superblock-base-address sb) (h5-io--read-uint64-le 16))
+        (setf (h5-io-superblock-base-address sb) (h5-io--read-uint64-le 13))
         (setf (h5-io-superblock-superblock-extension-address sb)
-              (h5-io--read-uint64-le 24))
-        (setf (h5-io-superblock-end-of-file-address sb) (h5-io--read-uint64-le 32))
+              (h5-io--read-uint64-le 21))
+        (setf (h5-io-superblock-end-of-file-address sb) (h5-io--read-uint64-le 29))
         (setf (h5-io-superblock-root-group-object-header-address sb)
-              (h5-io--read-uint64-le 40))
+              (h5-io--read-uint64-le 37))
         sb)
        (t
         (error "Unsupported superblock version: %d" version))))))
@@ -444,9 +475,168 @@ Returns a list of messages as (type . data) pairs."
           (setq pos (+ pos (mod (- 8 (mod pos 8)) 8))))))
     (nreverse messages)))
 
+(defun h5-io--read-object-header-v2 (address)
+  "Read object header version 2 at ADDRESS.
+Returns a list of messages as (type . data-position) pairs.
+Object header v2 format (HDF5 >= 1.8):
+- Signature: 'OHDR' (4 bytes)
+- Version: 2 (1 byte)
+- Flags: (1 byte)
+  Bits 0-1: Size of 'size of chunk 0' field (00=1, 01=2, 10=4, 11=8 bytes)
+  Bit 2: Track attribute creation order
+  Bit 3: Index attribute creation order
+  Bit 4: Store non-default attribute phase change values
+  Bit 5: Store access/modification/change/birth times
+- Optional fields based on flags
+- Size of chunk 0
+- Messages (packed, no 8-byte alignment)
+- Checksum (4 bytes)"
+  (goto-char (1+ address))
+
+  ;; Read and validate OHDR signature
+  (let ((sig-bytes (list
+                    (h5-io--read-uint8 (1+ address))
+                    (h5-io--read-uint8 (+ address 2))
+                    (h5-io--read-uint8 (+ address 3))
+                    (h5-io--read-uint8 (+ address 4)))))
+    (unless (equal sig-bytes '(79 72 68 82))  ; 'O' 'H' 'D' 'R'
+      (error "Invalid OHDR signature at address %d" address)))
+
+  (let* ((version (h5-io--read-uint8 (+ address 5)))
+         (flags (h5-io--read-uint8 (+ address 6)))
+         (pos (+ address 7))
+
+         ;; Parse flag bits
+         (size-of-chunk0-size (ash 1 (logand flags #x03)))  ; Bits 0-1: 00=1, 01=2, 10=4, 11=8
+         (track-attr-order (not (zerop (logand flags #x04))))      ; Bit 2
+         (index-attr-order (not (zerop (logand flags #x08))))      ; Bit 3
+         (store-phase-change (not (zerop (logand flags #x10))))    ; Bit 4
+         (store-times (not (zerop (logand flags #x20)))))          ; Bit 5
+
+    ;; Skip optional timestamp fields if present (4 bytes each)
+    (when store-times
+      (setq pos (+ pos 16)))  ; access, modification, change, birth times
+
+    ;; Skip optional attribute phase change values if present (2 bytes each)
+    (when store-phase-change
+      (setq pos (+ pos 4)))   ; max-compact, min-dense
+
+    ;; Read size of chunk 0
+    (let ((chunk0-size (cond
+                        ((= size-of-chunk0-size 1) (h5-io--read-uint8 pos))
+                        ((= size-of-chunk0-size 2) (h5-io--read-uint16-le pos))
+                        ((= size-of-chunk0-size 4) (h5-io--read-uint32-le pos))
+                        ((= size-of-chunk0-size 8) (h5-io--read-uint64-le pos))
+                        (t (error "Invalid size-of-chunk0-size: %d" size-of-chunk0-size)))))
+      (setq pos (+ pos size-of-chunk0-size))
+
+      ;; Read messages until we reach the checksum (4 bytes before end of chunk)
+      (let ((messages nil)
+            (chunk-end (+ (1+ address) 4 2 chunk0-size)))  ; signature(4) + version(1) + flags(1) + optional + size + chunk0-size
+
+        ;; Adjust chunk-end for optional fields
+        (when store-times
+          (setq chunk-end (+ chunk-end 16)))
+        (when store-phase-change
+          (setq chunk-end (+ chunk-end 4)))
+        (setq chunk-end (+ chunk-end size-of-chunk0-size))
+
+        ;; Read messages (in v2, messages are packed without alignment)
+        (while (< (+ pos 4) (- chunk-end 4))  ; Stop 4 bytes before end (checksum)
+          (when (< pos (point-max))
+            (let* ((msg-type (h5-io--read-uint8 pos))
+                   (msg-size (h5-io--read-uint16-le (+ pos 1)))
+                   (msg-flags (h5-io--read-uint8 (+ pos 3)))
+                   (msg-data-pos (+ pos 4)))
+
+              ;; Stop if we hit a NIL message (padding)
+              (if (= msg-type h5-io-msg-nil)
+                  (setq pos chunk-end)  ; Exit loop
+                (progn
+                  (push (cons msg-type msg-data-pos) messages)
+                  (setq pos (+ msg-data-pos msg-size)))))))
+
+        (nreverse messages)))))
+
 (defun h5-io--find-message (messages msg-type)
   "Find first message of MSG-TYPE in MESSAGES."
   (cl-find-if (lambda (msg) (= (car msg) msg-type)) messages))
+
+(defun h5-io--find-all-messages (messages msg-type)
+  "Find all messages of MSG-TYPE in MESSAGES."
+  (cl-remove-if-not (lambda (msg) (= (car msg) msg-type)) messages))
+
+(defun h5-io--read-link-message (msg-pos)
+  "Read link message at MSG-POS.
+Link messages (HDF5 >= 1.8) store links to objects in groups.
+Returns (name . address) pair for hard links, or nil for other link types.
+Format:
+- Version: 1 byte
+- Flags: 1 byte
+  Bits 0-1: Size of length field (00=1, 01=2, 10=4, 11=8 bytes)
+  Bit 2: Creation order present
+  Bit 3: Link type field present (if not set, default to hard link)
+  Bit 4: Link name character set present
+- Optional fields based on flags
+- Link name length (variable size)
+- Link name (variable length)
+- Link information (depends on link type)"
+  (let* ((version (h5-io--read-uint8 msg-pos))
+         (flags (h5-io--read-uint8 (+ msg-pos 1)))
+         (pos (+ msg-pos 2))
+
+         ;; Parse flags
+         (link-name-size-size (ash 1 (logand flags #x03)))  ; Bits 0-1
+         (has-creation-order (not (zerop (logand flags #x04))))    ; Bit 2
+         (has-link-type (not (zerop (logand flags #x08))))         ; Bit 3
+         (has-charset (not (zerop (logand flags #x10)))))          ; Bit 4
+
+    ;; Read link type (default to 0 = hard link if not present)
+    (let ((link-type (if has-link-type
+                        (prog1 (h5-io--read-uint8 pos)
+                          (setq pos (+ pos 1)))
+                      0)))
+
+      ;; Skip creation order if present
+      (when has-creation-order
+        (setq pos (+ pos 8)))
+
+      ;; Skip character set if present
+      (when has-charset
+        (setq pos (+ pos 1)))
+
+      ;; Read link name length
+      (let ((name-length (cond
+                          ((= link-name-size-size 1) (h5-io--read-uint8 pos))
+                          ((= link-name-size-size 2) (h5-io--read-uint16-le pos))
+                          ((= link-name-size-size 4) (h5-io--read-uint32-le pos))
+                          ((= link-name-size-size 8) (h5-io--read-uint64-le pos))
+                          (t (error "Invalid link-name-size-size: %d" link-name-size-size)))))
+        (setq pos (+ pos link-name-size-size))
+
+        ;; Read link name
+        (goto-char (1+ pos))
+        (let ((name (buffer-substring (point) (+ (point) name-length))))
+          (setq pos (+ pos name-length))
+
+          ;; Read link information based on link type
+          (cond
+           ((= link-type 0)  ; Hard link
+            (let ((obj-addr (h5-io--read-uint64-le pos)))
+              (cons name obj-addr)))
+
+           ((= link-type 1)  ; Soft link (symbolic link)
+            ;; Soft links have: length (2 bytes) + target name
+            ;; We don't follow soft links yet, so return nil
+            nil)
+
+           ((= link-type 64)  ; External link
+            ;; External links have: external file info + target path
+            ;; We don't follow external links yet, so return nil
+            nil)
+
+           (t
+            (error "Unknown link type: %d" link-type)))))))))
 
 (defun h5-io--read-symbol-table-message (msg-pos)
   "Read symbol table message at MSG-POS.
@@ -477,30 +667,61 @@ Returns list of (name . obj-address) pairs."
 
 (defun h5-io--read-group (address name file)
   "Read a group at ADDRESS with NAME from FILE.
-Returns an h5-io-group structure with children populated."
+Returns an h5-io-group structure with children populated.
+Supports both object header v1 (HDF5 < 1.8) and v2 (HDF5 >= 1.8)."
   (with-current-buffer (h5-io-file-buffer file)
     (let ((group (make-h5-io-group :name name))
-          (messages (condition-case nil
-                        (h5-io--read-object-header-v1 address)
-                      (error nil))))
+          (messages nil)
+          (is-v2 nil))
+
+      ;; Detect object header version by checking for "OHDR" signature
+      (goto-char (1+ address))
+      (let ((sig-bytes (list
+                        (h5-io--read-uint8 (1+ address))
+                        (h5-io--read-uint8 (+ address 2))
+                        (h5-io--read-uint8 (+ address 3))
+                        (h5-io--read-uint8 (+ address 4)))))
+        (setq is-v2 (equal sig-bytes '(79 72 68 82))))  ; 'O' 'H' 'D' 'R'
+
+      ;; Read object header based on version
+      (setq messages (condition-case err
+                         (if is-v2
+                             (h5-io--read-object-header-v2 address)
+                           (h5-io--read-object-header-v1 address))
+                       (error
+                        (message "Error reading object header at %d: %s" address (error-message-string err))
+                        nil)))
 
       (when messages
-        ;; Look for symbol table message
-        (let ((sym-table-msg (h5-io--find-message messages h5-io-msg-symbol-table)))
-          (when sym-table-msg
-            (let* ((sym-table-data (h5-io--read-symbol-table-message (cdr sym-table-msg)))
-                   (btree-addr (car sym-table-data))
-                   (heap-addr (cdr sym-table-data))
-                   (heap (condition-case nil
-                             (h5-io--read-local-heap heap-addr)
-                           (error nil))))
+        (if is-v2
+            ;; HDF5 >= 1.8: Look for link messages (compact storage)
+            (let ((link-msgs (h5-io--find-all-messages messages h5-io-msg-link)))
+              (when link-msgs
+                (let ((children-entries nil))
+                  (dolist (link-msg link-msgs)
+                    (condition-case nil
+                        (let ((link-data (h5-io--read-link-message (cdr link-msg))))
+                          (when link-data
+                            (push link-data children-entries)))
+                      (error nil)))
+                  (setf (h5-io-group-children group) (nreverse children-entries)))))
 
-              (when heap
-                ;; For simple groups, the btree-addr points to a symbol table node
-                (let ((children-entries (condition-case nil
-                                            (h5-io--read-symbol-table-node btree-addr heap)
-                                          (error nil))))
-                  (setf (h5-io-group-children group) children-entries)))))))
+          ;; HDF5 < 1.8: Look for symbol table message
+          (let ((sym-table-msg (h5-io--find-message messages h5-io-msg-symbol-table)))
+            (when sym-table-msg
+              (let* ((sym-table-data (h5-io--read-symbol-table-message (cdr sym-table-msg)))
+                     (btree-addr (car sym-table-data))
+                     (heap-addr (cdr sym-table-data))
+                     (heap (condition-case nil
+                               (h5-io--read-local-heap heap-addr)
+                             (error nil))))
+
+                (when heap
+                  ;; For simple groups, the btree-addr points to a symbol table node
+                  (let ((children-entries (condition-case nil
+                                              (h5-io--read-symbol-table-node btree-addr heap)
+                                            (error nil))))
+                    (setf (h5-io-group-children group) children-entries))))))))
 
       group)))
 
@@ -662,9 +883,19 @@ Returns an h5-io-dataset structure with data."
 
 (defun h5-io--read-dataset (address name)
   "Read dataset at ADDRESS with NAME.
-Returns an h5-io-dataset structure."
+Returns an h5-io-dataset structure.
+Supports both object header v1 (HDF5 < 1.8) and v2 (HDF5 >= 1.8)."
   (condition-case nil
-      (let* ((messages (h5-io--read-object-header-v1 address))
+      (let* (;; Detect object header version
+             (sig-bytes (list
+                         (h5-io--read-uint8 (1+ address))
+                         (h5-io--read-uint8 (+ address 2))
+                         (h5-io--read-uint8 (+ address 3))
+                         (h5-io--read-uint8 (+ address 4))))
+             (is-v2 (equal sig-bytes '(79 72 68 82)))  ; 'O' 'H' 'D' 'R'
+             (messages (if is-v2
+                          (h5-io--read-object-header-v2 address)
+                        (h5-io--read-object-header-v1 address)))
              (dataset (make-h5-io-dataset :name name)))
         ;; Look for dataspace message
         (let ((dataspace-msg (h5-io--find-message messages h5-io-msg-dataspace)))
