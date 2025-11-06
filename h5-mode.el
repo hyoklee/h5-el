@@ -68,20 +68,7 @@ Similar to Dired, this mode provides a tree-like view of HDF5 file contents.
 
 Key bindings:
 \\{h5-mode-map}"
-  (and buffer-file-name
-       (file-writable-p buffer-file-name)
-       (setq buffer-read-only nil))
-  ;; Auto-open HDF5 file if visiting a file
-  (when (and buffer-file-name
-             (not h5-current-file)
-             (file-exists-p buffer-file-name))
-    (condition-case err
-        (progn
-          (setq h5-current-file (h5-io-open buffer-file-name h5-initial-read-bytes))
-          ;; Show only top-level by default for faster loading
-          (h5-display-file-structure h5-current-file 1))
-      (error
-       (message "Error opening HDF5 file: %s" (error-message-string err))))))
+  (setq buffer-read-only t))
 
 ;;; Interactive Functions
 
@@ -96,6 +83,25 @@ Key bindings:
 
 (defvar-local h5-expanded-groups nil
   "List of group paths that have been manually expanded.")
+
+;;;###autoload
+(defun h5-open-file (filename)
+  "Open HDF5 file FILENAME in h5-mode.
+This function creates a new buffer and loads only the metadata,
+not the entire file content. Safe for very large files (e.g., 19GB)."
+  (interactive "fOpen HDF5 file: ")
+  (let* ((buffer-name (format "*h5: %s*" (file-name-nondirectory filename)))
+         (buf (get-buffer-create buffer-name)))
+    (with-current-buffer buf
+      (h5-mode)
+      (setq buffer-file-name filename)
+      (condition-case err
+          (progn
+            (setq h5-current-file (h5-io-open filename h5-initial-read-bytes))
+            (h5-display-file-structure h5-current-file 1))
+        (error
+         (message "Error opening HDF5 file: %s" (error-message-string err)))))
+    (switch-to-buffer buf)))
 
 (defun h5-open-or-view ()
   "Open a group, view dataset as text, or view attribute.
@@ -446,11 +452,26 @@ Returns (path . object) or nil if no object at point."
 
 (add-hook 'kill-buffer-hook 'h5-mode-cleanup)
 
-;; Auto-mode for HDF5 files
+;; IMPORTANT: Auto-mode-alist is DISABLED for HDF5 files to prevent
+;; loading entire large files into memory. Use h5-open-file instead.
+;;
+;; DO NOT uncomment these lines unless you only work with small HDF5 files:
+;; ;;;###autoload
+;; (add-to-list 'auto-mode-alist '("\\.h5\\'" . h5-mode))
+;; ;;;###autoload
+;; (add-to-list 'auto-mode-alist '("\\.hdf5\\'" . h5-mode))
+;;
+;; For dired integration, add to your ~/.emacs:
+;; (with-eval-after-load 'dired
+;;   (define-key dired-mode-map (kbd "C-c h") 'h5-open-file-at-point))
+
 ;;;###autoload
-(add-to-list 'auto-mode-alist '("\\.h5\\'" . h5-mode))
-;;;###autoload
-(add-to-list 'auto-mode-alist '("\\.hdf5\\'" . h5-mode))
+(defun h5-open-file-at-point ()
+  "Open HDF5 file at point in dired using h5-mode.
+Safe for large files - only reads metadata."
+  (interactive)
+  (require 'dired)
+  (h5-open-file (dired-get-file-for-visit)))
 
 (put 'h5-mode 'mode-class 'special)
 (provide 'h5-mode)

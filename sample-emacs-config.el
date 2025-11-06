@@ -23,29 +23,38 @@
 (require 'h5-mode)
 
 ;; ============================================================================
-;; Automatic Mode Association
+;; CRITICAL: Dired Integration (Required for Large Files)
 ;; ============================================================================
 
-;; These lines are already included in h5-mode.el, but shown here for reference
-;; h5-mode will automatically activate for files with .h5 or .hdf5 extensions
+;; DO NOT use auto-mode-alist for HDF5 files! It will load the entire
+;; file into memory before h5-mode even activates, causing Emacs to hang
+;; on large files (e.g., 19GB).
+
+;; Instead, use this dired binding to open HDF5 files safely:
+(with-eval-after-load 'dired
+  (define-key dired-mode-map (kbd "C-c h") 'h5-open-file-at-point))
+
+;; Now in dired:
+;; 1. Navigate to your HDF5 file
+;; 2. Press C-c h (not RETURN!)
+;; 3. File opens instantly, reading only metadata
+
+;; Alternative: Use a different key binding if you prefer
+;; (with-eval-after-load 'dired
+;;   (define-key dired-mode-map (kbd "C-c C-h") 'h5-open-file-at-point))
+
+;; ============================================================================
+;; WARNING: Auto-mode-alist is DISABLED
+;; ============================================================================
+
+;; Auto-mode-alist is intentionally disabled in h5-mode.el to prevent
+;; memory issues with large files. If you ONLY work with small HDF5 files
+;; (< 100MB), you can enable it in your config:
+
 ;; (add-to-list 'auto-mode-alist '("\\.h5\\'" . h5-mode))
 ;; (add-to-list 'auto-mode-alist '("\\.hdf5\\'" . h5-mode))
 
-;; ============================================================================
-;; Dired Integration
-;; ============================================================================
-
-;; When you press RETURN on an HDF5 file in dired, it will automatically
-;; open in h5-mode. This is already handled by auto-mode-alist above.
-
-;; Optional: Add a custom dired binding to force h5-mode for any file
-(eval-after-load 'dired
-  '(define-key dired-mode-map (kbd "C-c h")
-     (lambda ()
-       (interactive)
-       (let ((file (dired-get-file-for-visit)))
-         (find-file file)
-         (h5-mode)))))
+;; But be warned: pressing RETURN in dired will load the ENTIRE file!
 
 ;; ============================================================================
 ;; Performance Settings
