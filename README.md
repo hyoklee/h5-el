@@ -199,28 +199,32 @@ Add h5-el to your Emacs load path and require h5-mode:
 ```elisp
 (add-to-list 'load-path "/path/to/h5-el")
 (require 'h5-mode)
+
+;; IMPORTANT: Bind a key in dired to open HDF5 files safely
+(with-eval-after-load 'dired
+  (define-key dired-mode-map (kbd "C-c h") 'h5-open-file-at-point))
 ```
 
-h5-mode will automatically activate when you open .h5 or .hdf5 files from dired or with `find-file`.
+**CRITICAL:** Do NOT use `auto-mode-alist` with h5-mode for large files. It will load the entire file into memory before h5-mode activates.
 
 See `sample-emacs-config.el` for a complete configuration example.
 
 ## Usage
 
-### From Dired
+### From Dired (Recommended for Large Files)
 
 1. Navigate to a directory with HDF5 files (`C-x d`)
 2. Move cursor to an .h5 or .hdf5 file
-3. Press `RETURN`
+3. Press `C-c h` (or your chosen binding)
 4. The file will open in h5-mode showing only top-level groups (for faster loading)
 
 ### Direct Usage
 
 ```
-M-x h5-mode
+M-x h5-open-file RET /path/to/file.h5 RET
 ```
 
-It's similar to Dired.
+This is the safe way to open HDF5 files that works for any file size.
 
 ### Performance Optimization
 
@@ -285,7 +289,7 @@ h5-mode is optimized to handle very large HDF5 files efficiently:
 ```
 1. Open dired: C-x d
 2. Navigate to HDF5 file: my_data.h5
-3. Press: RETURN
+3. Press: C-c h (NOT RETURN!)
 4. h5-mode opens showing:
 
    HDF5 File: /path/to/my_data.h5
