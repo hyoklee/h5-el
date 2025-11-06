@@ -152,9 +152,9 @@ By default, uses the value of h5-show-depth."
     (h5-io-walk file
                 (lambda (path obj)
                   (when (h5-should-show-object-p path)
-                    (let ((line-num (line-number-at-pos))
-                          (depth (h5-path-depth path))
-                          (indent (make-string (* depth 2) ?\s)))
+                    (let* ((line-num (line-number-at-pos))
+                           (depth (h5-path-depth path))
+                           (indent (make-string (* depth 2) ?\s)))
                       (cond
                        ((h5-io-group-p obj)
                         (insert (format "%s[Group] %s\n" indent path))
